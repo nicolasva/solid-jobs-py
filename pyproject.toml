@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "solid-jobs-py"
-version = "0.1.0"
+version = "0.2.0"
 description = "SolidJobs for Python: Redis task runner on PEP 734 subinterpreters, backed by the Ruby solid-redis gem through a sidecar."
 readme = "README.md"
 license = "LGPL-3.0-or-later"

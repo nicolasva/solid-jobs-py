@@ -241,7 +241,24 @@ Lecture honnête :
 - **I/O** : warm est ~12 % sous Celery (même écart que native, dû à la durée de `sleep`).
 - **Mémoire** : warm consomme autant que Celery (~354 contre 305 MiB à N=8) et ~2,5x plus que native, car chaque worker est un vrai processus Python. Le gain mémoire des sous-interpréteurs est perdu : le warm pool se choisit pour la compatibilité, pas pour la performance.
 - **MessagePack** : aucun gain mesurable (écarts dans le bruit, parfois plus lent). JSON reste le défaut.
-- **Non mesuré** : 100 000 jobs (fuites), crash/timeout en charge, redémarrages répétés. La récupération après crash est couverte par les tests (`tests/test_warm.py`), pas par un benchmark.
+
+#### Robustesse (script `benchmark_celery-solid-jobs-py/robustness.py`)
+
+**Soak : 100 000 jobs vides, 4 workers chauds.** Aucune fuite observée : RSS de l'arbre (sidecar Ruby inclus), descripteurs de fichiers et threads sont constants du début à la fin.
+
+| Configuration | Débit | RSS à 10 % → 100 % | FDs / threads | Processus workers utilisés |
+|---|---:|---|---|---:|
+| sans recyclage | 6148 jobs/s | 204,6 → 204,7 MiB | 27 / 16 (constants) | 4 |
+| recyclage tous les 5000 jobs | 6157 jobs/s | 205,3 → 206,9 MiB | 27 / 16 (constants) | 24 |
+
+Le recyclage ne coûte rien de mesurable en débit ici. Il n'était pas nécessaire pour ce job vide : le RSS plafonne sans lui (un job qui fuit réellement le justifierait).
+
+**Chaos : 5000 jobs, 4 workers chauds, `job_timeout=2 s`.** Fautes injectées à la première tentative : 500 crashs avant l'effet, 500 crashs après l'effet, 100 jobs bloqués (timeout), plus 39 `SIGKILL` aléatoires sur les workers pendant l'exécution (1098 processus workers utilisés au total).
+
+- **Aucun job perdu** : 5000/5000 ont produit leur effet ; rien ne reste dans les files, réservations ou retries (`IntegrityCheck`), aucune réservation invalide.
+- **Doublons = at-least-once** : 500 effets dupliqués, exactement les 500 jobs crashés *après* leur effet. Aucun doublon dû aux `SIGKILL` externes (la fenêtre entre effet et ACK est étroite sur des jobs courts, ce n'est pas une garantie).
+- Débit sous chaos : ~51 jobs/s (dominé par les timeouts de 2 s et le backoff de redémarrage).
+- Limites : un seul scénario (graine fixe), pas de test « timeout pendant l'ACK », jobs courts uniquement.
 
 ## Développement
 
