@@ -3,6 +3,7 @@
 [![Build Status](https://github.com/nicolasva/solid-jobs-py/actions/workflows/ci.yml/badge.svg)](https://github.com/nicolasva/solid-jobs-py/actions/workflows/ci.yml)
 [![PyPI version](https://img.shields.io/pypi/v/solid-jobs-py.svg)](https://pypi.org/project/solid-jobs-py/)
 [![Downloads](https://img.shields.io/pypi/dm/solid-jobs-py.svg)](https://pypistats.org/packages/solid-jobs-py)
+[![License: LGPL v3+](https://img.shields.io/pypi/l/solid-jobs-py.svg)](LICENSE.txt)
 [![Documentation](https://img.shields.io/badge/docs-README-blue.svg)](https://github.com/nicolasva/solid-jobs-py#readme)
 
 Port Python de [solid-jobs](../solid-jobs) (Ruby) : jobs fiables sur Redis, exécutés en parallélisme CPU réel
@@ -227,3 +228,7 @@ REDIS_URL=redis://127.0.0.1:6390/15 PYTHONPATH=src python3 -m unittest discover 
 ```
 
 Les tests utilisent `FLUSHDB` sur la base indiquée : n'utilisez pas une base de production.
+
+## Licence
+
+LGPL-3.0-or-later, comme [solid-jobs](https://github.com/nicolasva/solid-jobs). Voir [LICENSE.txt](LICENSE.txt).
