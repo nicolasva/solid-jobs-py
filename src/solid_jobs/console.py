@@ -29,6 +29,11 @@ def _parser():
     parser.add_argument("--channel", action="append", default=[], help="channel name or name,weight")
     parser.add_argument("-t", "--timeout", type=float, help="graceful shutdown timeout in seconds")
     parser.add_argument("--redis-url", help="Redis URL used by the solid-redis sidecar")
+    parser.add_argument("--warm-workers", type=int, help="enable the Warm IPC Pool with N persistent Python processes")
+    parser.add_argument("--warm-require", action="append", default=[],
+                        help="module preloaded in the warm workers only (never imported in subinterpreters)")
+    parser.add_argument("--warm-task", action="append", default=[],
+                        help="module.Class always run in the warm pool (compatibility registry)")
     parser.add_argument("-v", "--version", action="version", version=f"solid-jobs {VERSION}")
     return parser
 
@@ -66,6 +71,12 @@ def main(argv=None):
     timeout = options.timeout or values.get("timeout")
     if timeout:
         config.shutdown_timeout = timeout
+    warm = values.get("warm_pool", {})
+    warm_workers = options.warm_workers or warm.get("workers")
+    if warm_workers or warm.get("enabled"):
+        config.configure_execution(warm_pool={**warm, "enabled": True, **({"workers": warm_workers} if warm_workers else {})})
+    config.warm_requires = [*values.get("warm_require", []), *options.warm_require]
+    config.configure_execution(registry={name: "warm" for name in [*values.get("warm_tasks", []), *options.warm_task]})
     config.requires = [_import_requirement(r) for r in [*values.get("require", []), *options.require]]
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

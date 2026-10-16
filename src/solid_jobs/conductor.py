@@ -11,6 +11,7 @@ from .errors import Error, RedisError
 from .heartbeat import INTERVAL, Heartbeat
 from .recovery import call as recover
 from .timer import Timer
+from .warm import WarmPool
 from . import keyspace, worker
 
 STOP_GRACE = 5.0
@@ -42,6 +43,7 @@ class Conductor:
         self._quiet = threading.Event()
         self._stop_heartbeat = threading.Event()
         self._worker_failures = {}
+        self._warm_pool = None
 
     def running(self):
         return self._started
@@ -50,9 +52,11 @@ class Conductor:
         if self._started:
             raise Error("Conductor is already running")
         config = self.config
-        snapshot = config.snapshot()
-        paths = json.dumps([path for path in sys.path if path])
+        paths_list = [path for path in sys.path if path]
+        paths = json.dumps(paths_list)
         try:
+            self._start_warm_pool(paths_list)
+            snapshot = config.snapshot()
             recover(config)
             self._heartbeat_queue = interpreters.create_queue()
             ready = interpreters.create_queue()
@@ -87,12 +91,30 @@ class Conductor:
         self._stop_heartbeat.set()
         for thread in self._threads:
             thread.join(deadline)
+        self._stop_warm_pool()
         self._teardown()
         self.config.fire("shutdown", self)
         return results
 
     def remote_signal(self):
         return self.config.redis_pool.call("RPOP", keyspace.node_signals(self.identity))
+
+    def _start_warm_pool(self, paths):
+        options = self.config.warm_pool
+        if not options["enabled"]:
+            return
+        self._warm_pool = WarmPool(options)
+        self._warm_pool.start(self.config.snapshot(for_warm_worker=True), paths)
+        self.config.warm_socket = self._warm_pool.socket_path
+
+    def warm_pool_stats(self):
+        return self._warm_pool.stats() if self._warm_pool else None
+
+    def _stop_warm_pool(self):
+        if self._warm_pool is not None:
+            self._warm_pool.stop()
+            self._warm_pool = None
+            self.config.warm_socket = None
 
     def _start_worker(self, snapshot, paths, processor_id, ready):
         interpreter = interpreters.create()
@@ -232,4 +254,5 @@ class Conductor:
                 pass
         for _, thread, _ in self._workers:
             thread.join(2)
+        self._stop_warm_pool()
         self._teardown()

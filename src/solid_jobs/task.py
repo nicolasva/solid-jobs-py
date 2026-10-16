@@ -17,6 +17,7 @@ class Task:
     """
 
     task_id = None
+    execution_mode = None  # "native", "warm" or "auto"; sent with every published job
 
     def __init_subclass__(cls, **options):
         super().__init_subclass__()
@@ -52,6 +53,8 @@ class Task:
     @classmethod
     def current_task_options(cls):
         merged = settings.config().default_task_options
+        if cls.execution_mode is not None:
+            merged["execution_mode"] = cls.execution_mode
         for klass in reversed(cls.__mro__):
             merged.update(klass.__dict__.get("_declared_options", {}))
         return merged

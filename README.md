@@ -98,7 +98,7 @@ Le sidecar s'arrête quand le parent meurt (EOF sur stdin).
 
 ## Volontairement non porté
 
-Adaptateurs Rails/ActiveJob, warm pool, code spécifique Ractor, télémétrie SolidTrace (`observations.rb`).
+Adaptateurs Rails/ActiveJob, code spécifique Ractor, télémétrie SolidTrace (`observations.rb`).
 Les hooks d'instrumentation des jobs sont conservés (l'instrumenteur doit être une classe sans argument).
 
 ## Benchmark : Celery vs solid-jobs-py
@@ -220,6 +220,29 @@ puis `BENCHMARK_STABILITY_DURATION=300 .venv/bin/python stability.py`.
 En résumé : solid-jobs-py égale Celery en CPU et mixed, le dépasse nettement en surcoût et en mémoire, et reste derrière
 de quelques pourcents en IO à faible concurrence.
 
+### Benchmark du Warm IPC Pool
+
+Mêmes charges que ci-dessus (2000 jobs, médianes de 3 répétitions, 1/2/4/8 workers, Python 3.14, 12 CPU, macOS). Dossier : `benchmark_celery-solid-jobs-py/` (`bench.py`, résultats complets dans `results/warm-ipc.md` et `.csv`). Pour les variantes warm, N = nombre de processus chauds (et de sous-interpréteurs engine qui gardent réservation et ACK). RSS = arbre de processus complet, sidecar Ruby inclus.
+
+| Charge | N | Celery | native | warm (JSON) | warm (msgpack) |
+|---|---:|---:|---:|---:|---:|
+| noop (jobs/s) | 1 | 2162 | 4216 | 2858 | 2890 |
+| noop | 4 | 2302 | 7077 | 5705 | 6128 |
+| noop | 8 | 2142 | 6689 | 6056 | 5571 |
+| cpu | 1 | 134 | 135 | 130 | 127 |
+| cpu | 8 | 878 | 880 | 887 | 880 |
+| io | 1 | 167 | 151 | 148 | 148 |
+| io | 8 | 1337 | 1187 | 1164 | 1153 |
+| RSS pic (MiB), N=8 | | 305 | 143 | 354 | 358 |
+
+Lecture honnête :
+- **Surcoût IPC** : sur des jobs vides, warm est ~30 % sous native (2858 contre 4216 jobs/s à N=1) mais reste 1,3x à 2,8x au-dessus de Celery. Chaque job ajoute un aller-retour Unix (engine → superviseur → worker).
+- **CPU** : le parallélisme est identique (887 contre 880 jobs/s à N=8), le surcoût IPC est négligeable sur des jobs de ~7 ms.
+- **I/O** : warm est ~12 % sous Celery (même écart que native, dû à la durée de `sleep`).
+- **Mémoire** : warm consomme autant que Celery (~354 contre 305 MiB à N=8) et ~2,5x plus que native, car chaque worker est un vrai processus Python. Le gain mémoire des sous-interpréteurs est perdu : le warm pool se choisit pour la compatibilité, pas pour la performance.
+- **MessagePack** : aucun gain mesurable (écarts dans le bruit, parfois plus lent). JSON reste le défaut.
+- **Non mesuré** : 100 000 jobs (fuites), crash/timeout en charge, redémarrages répétés. La récupération après crash est couverte par les tests (`tests/test_warm.py`), pas par un benchmark.
+
 ## Développement
 
 ```sh
@@ -228,6 +251,26 @@ REDIS_URL=redis://127.0.0.1:6390/15 PYTHONPATH=src python3 -m unittest discover 
 ```
 
 Les tests utilisent `FLUSHDB` sur la base indiquée : n'utilisez pas une base de production.
+
+## Warm IPC Pool (modes d'exécution)
+
+Pour les jobs qui utilisent des bibliothèques incompatibles avec les sous-interpréteurs, un pool de processus Python persistants (« chauds ») exécute les jobs. Les modules sont importés une seule fois par processus.
+
+```python
+class GenerateReport(Task, execution_mode="warm"):
+    def execute_task(self, report_id): ...
+```
+
+```
+solid-jobs --warm-workers 2 --warm-require legacy_reporting --warm-task myapp.jobs.GenerateReport ...
+```
+
+- Modes : `native` (sous-interpréteur, défaut), `warm`, `auto` (registre explicite `module.Class -> mode`, jamais d'inspection des arguments, aucun rejeu automatique sur l'autre moteur). Config : `Blueprint.configure_execution(default_mode, registry, warm_pool)`.
+- Le pool ne fait qu'exécuter : réservation, jeton de fencing et ACK restent dans l'engine (sidecar Ruby). Un `ok` du worker n'est pas un ACK. Garantie **at-least-once**, jamais exactly-once : un job non idempotent peut être rejoué si un worker meurt après son effet.
+- Transport : socket Unix 0600 dans un dossier 0700, trame 4 octets + JSON (MessagePack optionnel via `serializer="msgpack"`, plus lent dans les sous-interpréteurs, à mesurer), taille max 16 MiB, version et `request_id` vérifiés, pas de pickle, seules les sous-classes de `Task` autorisées sont chargées.
+- Un job à la fois par processus. Timeout ou crash : le worker est tué et remplacé (backoff exponentiel), l'erreur retryable passe par la FailurePolicy. Recyclage via `max_jobs_per_worker` et `max_rss_mb`. Arrêt : drain puis kill.
+- Options : `workers`, `startup_timeout`, `job_timeout`, `shutdown_timeout`, `max_jobs_per_worker`, `max_rss_mb`, `restart_backoff`, `serializer`, `max_message_bytes`, `allowed_modules`.
+- Écarts avec la spec : `Task` (pas `Job`), pool de taille fixe (pas de `max_workers`/`idle_timeout`/scaling dynamique), les modules incompatibles se déclarent dans `warm_requires`. Benchmarks : voir ci-dessous.
 
 ## Licence
 

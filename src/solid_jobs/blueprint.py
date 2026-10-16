@@ -10,10 +10,13 @@ from .errors import ConfigurationError
 from .instrumentation import NullInstrumenter
 from .interceptors import InterceptorRegistry
 from .ipc import GatewayPool
+from .warm import supervisor as warm_supervisor
+from .warm.client import WarmClient
 from .utilities import class_path, constantize, stringify_keys
 
 DEFAULT_TASK_OPTIONS = {"channel": "default", "max_failures": 25}
 CHANNEL_ORDERS = ("priority", "weighted", "shuffle")
+EXECUTION_MODES = ("native", "warm", "auto")
 
 
 def _normalize_channels(values):
@@ -54,6 +57,12 @@ class Blueprint:
         self.identity = f"{socket.gethostname()}:{os.getpid()}:{secrets.token_hex(6)}"
         self.instrumenter = NullInstrumenter()
         self.requires = []
+        self.warm_requires = []
+        self._execution_default_mode = "native"
+        self.execution_registry = {}
+        self._warm_pool = dict(warm_supervisor.DEFAULTS)
+        self.warm_socket = None
+        self._warm_client = None
         self._callbacks = {}
         self._redis_pool = None
 
@@ -64,7 +73,49 @@ class Blueprint:
             self._redis_pool = GatewayPool(path)
         return self._redis_pool
 
+    @property
+    def warm_pool(self):
+        return dict(self._warm_pool)
+
+    @warm_pool.setter
+    def warm_pool(self, options):
+        self._warm_pool = warm_supervisor.normalize(dict(options))
+
+    @property
+    def execution_default_mode(self):
+        return self._execution_default_mode
+
+    @execution_default_mode.setter
+    def execution_default_mode(self, mode):
+        if mode not in ("native", "warm"):
+            raise ValueError("execution_default_mode must be 'native' or 'warm'")
+        self._execution_default_mode = mode
+
+    def configure_execution(self, default_mode=None, registry=None, warm_pool=None):
+        if default_mode is not None:
+            self.execution_default_mode = default_mode
+        for name, mode in (registry or {}).items():
+            if mode not in ("native", "warm"):
+                raise ValueError(f"registry mode for {name!r} must be 'native' or 'warm'")
+            self.execution_registry[str(name)] = mode
+        if warm_pool is not None:
+            self.warm_pool = {**self._warm_pool, **warm_pool}
+        return self
+
+    @property
+    def warm_client(self):
+        if self._warm_client is None:
+            if not self.warm_socket:
+                return None
+            options = self._warm_pool
+            self._warm_client = WarmClient(self.warm_socket, options["serializer"], options["job_timeout"],
+                                           int(options["max_message_bytes"]))
+        return self._warm_client
+
     def close(self):
+        if self._warm_client is not None:
+            self._warm_client.close()
+            self._warm_client = None
         if self._redis_pool is not None:
             self._redis_pool.close()
             self._redis_pool = None
@@ -111,8 +162,11 @@ class Blueprint:
     def __repr__(self):
         return f"<Blueprint concurrency={self.concurrency} channels={self.channels!r}>"
 
-    def snapshot(self):
-        """JSON string a subinterpreter uses to rebuild an equivalent configuration."""
+    def snapshot(self, for_warm_worker=False):
+        """JSON string a subinterpreter (or warm worker process) uses to rebuild an equivalent configuration.
+
+        A warm worker runs jobs locally and imports only ``warm_requires``; engines import ``requires``.
+        """
         if self.gateway_socket is None:
             self.gateway_socket = gateway.ensure(self.redis_url, self.ruby_command)
         return json.dumps({
@@ -134,7 +188,11 @@ class Blueprint:
             "execute_interceptors": self.execute_interceptors.export(),
             "identity": self.identity,
             "instrumenter": class_path(type(self.instrumenter)),
-            "requires": list(self.requires),
+            "requires": list(self.warm_requires if for_warm_worker else self.requires),
+            "execution_default_mode": self._execution_default_mode,
+            "execution_registry": self.execution_registry,
+            "warm_pool": self._warm_pool,
+            "warm_socket": None if for_warm_worker else self.warm_socket,
             "log_level": self.logger.getEffectiveLevel(),
         })
 
@@ -152,6 +210,10 @@ class Blueprint:
         config.default_task_options = data["default_task_options"]
         config.identity = data["identity"]
         config.requires = data["requires"]
+        config.execution_default_mode = data["execution_default_mode"]
+        config.execution_registry = data["execution_registry"]
+        config.warm_pool = data["warm_pool"]
+        config.warm_socket = data["warm_socket"]
         config.logger.setLevel(data["log_level"])
         for module in config.requires:
             importlib.import_module(module)

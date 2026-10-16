@@ -1,6 +1,7 @@
 import json
 from collections import namedtuple
 
+from . import routing
 from .errors import InvalidJobError
 from .utilities import constantize
 
@@ -13,7 +14,11 @@ class Executor:
 
         self.config = config or settings.config()
 
-    def execute(self, envelope):
+    def execute(self, envelope, local=False):
+        """Runs the task natively, or in the Warm IPC Pool when its execution mode says so.
+
+        ``local=True`` forces in-process execution (warm workers, inline/testing mode).
+        """
         if isinstance(envelope, (str, bytes)):
             envelope = json.loads(envelope)
         if not isinstance(envelope, dict):
@@ -27,6 +32,9 @@ class Executor:
         channel = envelope.get("channel")
         if not isinstance(channel, str) or not channel:
             raise InvalidJobError("Task channel must be present")
+
+        if not local and routing.resolve(envelope, self.config) == "warm":
+            return routing.execute_warm(self.config, envelope)
 
         task = constantize(name)()
         task.task_id = envelope.get("id")

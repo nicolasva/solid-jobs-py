@@ -50,4 +50,4 @@ def execute(envelope):
         normalized["task"] = class_path(normalized["task"])
     normalized.setdefault("channel", "default")
     normalized.setdefault("id", str(uuid.uuid4()))
-    return Executor(config=settings.config()).execute(normalized)
+    return Executor(config=settings.config()).execute(normalized, local=True)
