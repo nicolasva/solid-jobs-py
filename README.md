@@ -1,5 +1,10 @@
 # solid-jobs-py
 
+[![Build Status](https://github.com/nicolasva/solid-jobs-py/actions/workflows/ci.yml/badge.svg)](https://github.com/nicolasva/solid-jobs-py/actions/workflows/ci.yml)
+[![PyPI version](https://img.shields.io/pypi/v/solid-jobs-py.svg)](https://pypi.org/project/solid-jobs-py/)
+[![Downloads](https://static.pepy.tech/badge/solid-jobs-py)](https://pepy.tech/project/solid-jobs-py)
+[![Documentation](https://img.shields.io/badge/docs-README-blue.svg)](https://github.com/nicolasva/solid-jobs-py#readme)
+
 Port Python de [solid-jobs](../solid-jobs) (Ruby) : jobs fiables sur Redis, exécutés en parallélisme CPU réel
 par des **sous-interpréteurs Python** (PEP 684 / PEP 734, un GIL par interpréteur).
 
