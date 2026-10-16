@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "solid-jobs-py"
+version = "0.1.0"
+description = "SolidJobs for Python: Redis task runner on PEP 734 subinterpreters, backed by the Ruby solid-redis gem through a sidecar."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
+
+[project.scripts]
+solid-jobs = "solid_jobs.console:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+solid_jobs = ["*.rb"]
